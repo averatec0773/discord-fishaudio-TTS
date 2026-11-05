@@ -21,6 +21,28 @@ log = logging.getLogger(__name__)
 QUEUE_MAXSIZE_DEFAULT = 20
 PLAY_TIMEOUT_S = 120
 FRAME_QUEUE_MAXSIZE = 200
+DAVE_READY_TIMEOUT_S = 5.0
+
+
+async def wait_for_dave_ready(voice_client, timeout: float = DAVE_READY_TIMEOUT_S) -> bool:
+    """Wait until the voice connection can DAVE-encrypt audio.
+
+    discord.py sends frames unencrypted while a DAVE (E2EE) session exists but
+    has no key yet. Discord clients drop those frames, so the bot shows the
+    speaking indicator but nobody hears anything. This happens briefly right
+    after joining, and permanently with an incompatible `davey` build.
+    Returns True when ready (or when DAVE is not in use), False on timeout.
+    """
+    conn = getattr(voice_client, "_connection", None)
+    if conn is None or getattr(conn, "dave_session", None) is None:
+        return True
+    loop = asyncio.get_running_loop()
+    deadline = loop.time() + timeout
+    while not getattr(conn, "can_encrypt", True):
+        if loop.time() >= deadline:
+            return False
+        await asyncio.sleep(0.05)
+    return True
 
 
 async def _put_with_backpressure(q: "_queue.Queue", item: bytes) -> None:
@@ -124,12 +146,12 @@ class GuildTTSPipeline:
                 "bot is not in the requested voice channel; /join required"
             )
 
-        # Read voice_id at job time so /voice set takes effect for queued
-        # jobs. If voice was cleared between enqueue and now, fail.
-        voice_id = self._config_store.get_voice_id()
+        # Read the voice at job time so /voice set takes effect for queued
+        # jobs: the speaker's own voice, else the default voice.
+        voice_id = self._config_store.get_voice_for(job.user_id)
         if not voice_id:
             raise RuntimeError(
-                "no voice_id configured; owner must run /voice set <id>"
+                "no voice configured; run /voice set <id> (or owner: /voice default <id>)"
             )
         fish_cfg = replace(self._fish_cfg, voice_id=voice_id)
 
@@ -170,6 +192,13 @@ class GuildTTSPipeline:
             if error is not None:
                 log.warning("voice_client.play after-error: %r", error)
             self._loop.call_soon_threadsafe(play_done.set)
+
+        if not await wait_for_dave_ready(voice_client):
+            log.warning(
+                "DAVE E2EE session has no encryption key after %.0fs; listeners "
+                "will not hear audio. Check the installed `davey` version.",
+                DAVE_READY_TIMEOUT_S,
+            )
 
         try:
             voice_client.play(source, after=after)

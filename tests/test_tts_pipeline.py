@@ -121,3 +121,74 @@ async def test_pipeline_registry_lazy_create(fish_cfg, cfg_store):
     assert p1 is p2
     assert p1 is not p3
     await reg.shutdown_all()
+
+
+# ---- DAVE (E2EE) readiness ----
+
+def make_dave_vc(ready_after: float | None):
+    """Voice client whose DAVE session becomes able to encrypt after `ready_after`
+    seconds (None = never)."""
+    vc = MagicMock()
+    conn = MagicMock()
+    conn.dave_session = object()
+    start = asyncio.get_running_loop().time()
+    type(conn).can_encrypt = property(
+        lambda self: ready_after is not None
+        and asyncio.get_running_loop().time() - start >= ready_after
+    )
+    vc._connection = conn
+    return vc
+
+
+@pytest.mark.asyncio
+async def test_wait_for_dave_ready_waits_for_key():
+    from discord_fish_tts.tts_pipeline import wait_for_dave_ready
+    vc = make_dave_vc(ready_after=0.2)
+    t0 = asyncio.get_running_loop().time()
+    assert await wait_for_dave_ready(vc, timeout=2.0) is True
+    assert asyncio.get_running_loop().time() - t0 >= 0.2
+
+
+@pytest.mark.asyncio
+async def test_wait_for_dave_ready_times_out_without_key():
+    from discord_fish_tts.tts_pipeline import wait_for_dave_ready
+    assert await wait_for_dave_ready(make_dave_vc(ready_after=None), timeout=0.2) is False
+
+
+@pytest.mark.asyncio
+async def test_wait_for_dave_ready_without_dave_session():
+    from discord_fish_tts.tts_pipeline import wait_for_dave_ready
+    vc = MagicMock()
+    vc._connection.dave_session = None
+    assert await wait_for_dave_ready(vc, timeout=0.1) is True
+
+
+@pytest.mark.asyncio
+async def test_play_waits_until_dave_can_encrypt(fish_cfg, cfg_store):
+    vm = make_voice_mgr()
+    vc = make_dave_vc(ready_after=0.3)
+    vc.is_playing = MagicMock(return_value=False)
+    vm.get_voice_client_in_channel = MagicMock(return_value=vc)
+    loop = asyncio.get_running_loop()
+    pipeline = GuildTTSPipeline(1, fish_cfg, vm, loop, cfg_store)
+    t0 = loop.time()
+    played_at: list[float] = []
+
+    async def fake_stream(text, cfg):
+        yield b""
+
+    def play(source, after):
+        assert vc._connection.can_encrypt, "played before DAVE key was ready"
+        played_at.append(loop.time() - t0)
+        loop.call_soon(after, None)
+    vc.play = MagicMock(side_effect=play)
+
+    with patch("discord_fish_tts.tts_pipeline.stream_opus_ogg", fake_stream):
+        await pipeline.start()
+        try:
+            await pipeline.enqueue(TTSJob("hello", 1, 1, 1))
+            await asyncio.wait_for(pipeline._queue.join(), timeout=5.0)
+        finally:
+            await pipeline.stop()
+
+    assert played_at and played_at[0] >= 0.3

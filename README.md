@@ -2,16 +2,18 @@
 
 Standalone Python Discord bot that speaks user-provided text in voice channels via [Fish Audio](https://fish.audio) TTS Live (streaming WebSocket). Companion project to my TypeScript [openclaw-fish-audio-live](https://github.com/averatec/openclaw-fish-audio-live) plugin — same API, different deployment pattern.
 
-## Features (v1.2)
+## Features (v1.3)
 
 - `/say <text>` — speak text in the bot's current voice channel (does **not** summon)
 - `/join` — summon the bot to your voice channel (the only command that moves the bot)
 - `/leave` — disconnect the bot
 - `/skip` — stop the currently-playing TTS
 - DM the bot text → speaks in your voice channel (only if the bot is already there)
-- `/voice show | set` — show or change the Fish Audio voice (set is owner-only)
+- `/voice set | show | reset` — **each whitelisted user picks their own voice** (paste a fish.audio link or ID; it's verified with Fish Audio). `/voice default` (owner) sets the fallback voice
+- `/toggle` — **auto-speak** for people without a mic: everything you type in an auto-speak channel is spoken in your voice while you're in a voice channel (the bot joins you if it isn't in voice yet; it never leaves another channel for you). Links, spoilers and custom emoji are cleaned up before speaking
+- `/ttschannel add | remove | list` — owner-only: which text channels `/toggle` listens in
 - `/whitelist add | remove | list` — owner-only user management
-- `/help` — context-aware command reference
+- `/help` — context-aware command reference with a link to the voice library; users without access are told who to contact
 - Per-guild FIFO queue
 - **Real streaming playback** — first audio plays before full synthesis completes
 - 200-char text limit
@@ -41,9 +43,10 @@ Invite the bot to a server with scopes `bot applications.commands` and permissio
 ### First-run flow
 
 1. Bot logs in → DMs you (the app owner) a welcome with quick-start instructions.
-2. `/voice set <fish_voice_id>` — pick a voice from your Fish Audio account (or use any reference_id).
+2. `/voice default <link>` — pick a default voice from the [voice library](https://fish.audio/app/discovery) (or any reference_id). Each user can `/voice set` their own.
 3. `/whitelist add @user` — grant access to friends.
 4. Invite to a server → join a voice channel → `/join` → `/say hello`.
+5. Optional: `/ttschannel add #no-mic` → users run `/toggle` and just type.
 
 No file editing required after the initial token setup.
 
@@ -72,9 +75,13 @@ Fish WS (msgpack)  ─►  Ogg/Opus chunks  ─►  Ogg demuxer  ─►  Opus pa
 
 - **Owner** is auto-detected from the Discord application's owner — no env var required. Owner has all rights.
 - **Whitelisted users** are added by the owner via `/whitelist add @user`. Managed at runtime, persisted to `data/config.json`.
-- **Everyone else** is denied. The bot can be invited to any server (it auto-allows all guilds), but unless you're whitelisted, all commands and DMs are rejected.
+- **Everyone else** is denied. The bot can be invited to any server (it auto-allows all guilds), but unless you're whitelisted, all commands and DMs are rejected with a message naming the owner (`OWNER_CONTACT` adds a handle).
 
 For a friend-group deploy: run the host, get the welcome DM, set the voice, `/whitelist add` your friends. Done.
+
+## Troubleshooting
+
+**The bot's speaking indicator lights up but nobody hears anything.** Discord voice is end-to-end encrypted (DAVE). If the voice session never gets an encryption key, discord.py sends the audio unencrypted and Discord clients drop it. `davey` 0.2.0 causes this with discord.py 2.7.x, so `pyproject.toml` pins `davey<0.2`. If you installed before the pin, run `pip install "davey<0.2"` and restart. The bot logs `DAVE E2EE session has no encryption key` when it hits this state.
 
 ## Tests
 
@@ -82,11 +89,10 @@ For a friend-group deploy: run the host, get the welcome DM, set the voice, `/wh
 pytest -v
 ```
 
-42 tests covering Ogg demuxing (against a captured Fish output fixture), MessagePack WebSocket protocol mocking, cross-thread audio source bridging, FIFO queue with skip semantics, config persistence, and input validation.
+53 tests covering Ogg demuxing (against a captured Fish output fixture), MessagePack WebSocket protocol mocking, cross-thread audio source bridging, FIFO queue with skip semantics, DAVE readiness, config persistence (per-user voices, auto-speak), chat-text cleanup, and input validation.
 
-## Roadmap (v1.3+)
+## Roadmap (v1.4+)
 
-- Per-user voice preference (override the global voice for one user)
 - Inline directives (`[[voice=...]] [[speed=...]]`)
 - Latency telemetry display ("first audio in 320ms")
 - HTTP fallback transport

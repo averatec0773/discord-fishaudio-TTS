@@ -46,6 +46,17 @@ def _required(name: str) -> str:
     return val
 
 
+def _int_list_env(name: str) -> list[int]:
+    """Comma/space separated Discord IDs, e.g. AUTO_TTS_CHANNELS=123,456."""
+    out: list[int] = []
+    for part in os.environ.get(name, "").replace(",", " ").split():
+        try:
+            out.append(int(part))
+        except ValueError:
+            log.warning("ignoring non-numeric id %r in %s", part, name)
+    return out
+
+
 def _migrate_legacy_env(config: ConfigStore, data_dir: Path) -> None:
     """v1.1 → v1.2 migration. Run once on every startup; idempotent.
 
@@ -83,7 +94,7 @@ async def amain() -> None:
     data_dir = Path(os.environ.get("DATA_DIR", "data"))
     config_path = data_dir / "config.json"
 
-    config = ConfigStore(config_path)
+    config = ConfigStore(config_path, default_auto_channels=_int_list_env("AUTO_TTS_CHANNELS"))
     _migrate_legacy_env(config, data_dir)
 
     # Static FishConfig parts; voice_id is dynamic per-job, read from config.
@@ -138,16 +149,16 @@ async def amain() -> None:
                 user = bot.get_user(owner_id) or await bot.fetch_user(owner_id)
                 if user is not None:
                     voice_hint = (
-                        f"✅ Voice already set: `{config.get_voice_id()}`."
+                        f"✅ Default voice already set: `{config.get_voice_id()}`."
                         if config.get_voice_id()
-                        else "⚠️  **No voice yet.** Run `/voice set <fish_voice_id>` to enable TTS.\n"
-                             "   (Find IDs at https://fish.audio → Voice Library)"
+                        else "⚠️  **No default voice yet.** Run `/voice default <link>`, or `/voice set <link>` for yourself.\n"
+                             "   (Browse voices at https://fish.audio/app/discovery)"
                     )
                     await user.send(
                         "👋 Welcome — you're the owner of this Fish Audio TTS bot.\n\n"
                         f"{voice_hint}\n\n"
                         "**Setup checklist:**\n"
-                        "1. `/voice set <id>` — set the voice (DM works)\n"
+                        "1. `/voice default <link>` — default voice; everyone can `/voice set` their own\n"
                         "2. `/whitelist add @friend` — grant access\n"
                         "3. Invite me to a server → join voice → `/join` → `/say hello`\n\n"
                         "Run `/help` anytime."
@@ -170,6 +181,8 @@ async def amain() -> None:
         owner_id_provider=owner_id_provider,
         max_text_len=max_text_len,
         idle_timeout_s=idle_timeout_s,
+        fish_api_key=fish_api_key,
+        owner_contact=os.environ.get("OWNER_CONTACT"),
     ))
 
     try:
