@@ -76,13 +76,17 @@ Fish WS (msgpack)  ─►  Ogg/Opus chunks  ─►  Ogg demuxer  ─►  Opus pa
 
 For a friend-group deploy: run the host, get the welcome DM, set the voice, `/whitelist add` your friends. Done.
 
+## Troubleshooting
+
+**The bot's speaking indicator lights up but nobody hears anything.** Discord voice is end-to-end encrypted (DAVE). If the voice session never gets an encryption key, discord.py sends the audio unencrypted and Discord clients drop it. `davey` 0.2.0 causes this with discord.py 2.7.x, so `pyproject.toml` pins `davey<0.2`. If you installed before the pin, run `pip install "davey<0.2"` and restart. The bot logs `DAVE E2EE session has no encryption key` when it hits this state.
+
 ## Tests
 
 ```bash
 pytest -v
 ```
 
-42 tests covering Ogg demuxing (against a captured Fish output fixture), MessagePack WebSocket protocol mocking, cross-thread audio source bridging, FIFO queue with skip semantics, config persistence, and input validation.
+46 tests covering Ogg demuxing (against a captured Fish output fixture), MessagePack WebSocket protocol mocking, cross-thread audio source bridging, FIFO queue with skip semantics, config persistence, and input validation.
 
 ## Roadmap (v1.3+)
 
